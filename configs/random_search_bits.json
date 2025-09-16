@@ -1,0 +1,60 @@
+{
+    "bits_config_list": [
+        {
+            "default": {
+                "attn": {
+                    "w_bits": 4,
+                    "a_bits": 6,
+                    "kv_bits": 16
+                },
+                "mlp": {
+                    "w_bits": 4,
+                    "a_bits": 6
+                }
+            },
+            "layers": {}
+        },
+        {
+            "default": {
+                "attn": {
+                    "w_bits": 6,
+                    "a_bits": 6,
+                    "kv_bits": 16
+                },
+                "mlp": {
+                    "w_bits": 6,
+                    "a_bits": 6
+                }
+            },
+            "layers": {}
+        },
+        {
+            "default": {
+                "attn": {
+                    "w_bits": 6,
+                    "a_bits": 8,
+                    "kv_bits": 16
+                },
+                "mlp": {
+                    "w_bits": 6,
+                    "a_bits": 8
+                }
+            },
+            "layers": {}
+        },
+        {
+            "default": {
+                "attn": {
+                    "w_bits": 8,
+                    "a_bits": 8,
+                    "kv_bits": 16
+                },
+                "mlp": {
+                    "w_bits": 8,
+                    "a_bits": 8
+                }
+            },
+            "layers": {}
+        }
+    ]
+}

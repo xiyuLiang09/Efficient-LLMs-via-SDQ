@@ -1,0 +1,6 @@
+torch
+datasets==4.0.0
+easydict==1.13
+numpy==2.3.3
+tqdm==4.67.1
+transformers==4.56.0
