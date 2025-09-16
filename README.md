@@ -53,6 +53,12 @@ python train.py \
 
 #### 2. Cyclic Precision Training (CPT)
 
+  First, perform a precision range test on the model to determine the lower bound of the precision range for cyclic precision training. Use the following command, then the visualization result will be saved directly in the current directory::
+
+```sh
+bash scripts/prec_range_test.sh
+```
+
   To enable the training bit-widths to be changed dynamically (i.e., use the cyclic precision training), use the script `run_cpt.sh` in the `./scripts` folder directly to tune the model with cyclic precision:
 
 ```sh
@@ -78,3 +84,7 @@ python train.py \
 ```
 
 After training, the model weights, LoRA module weights (two `.pt` files), and training configuration (one `.json` file) will all be saved in the corresponding `$output_dir`.
+
+### Search Optimal Per-layer Quant Config
+
+### Evaluation
