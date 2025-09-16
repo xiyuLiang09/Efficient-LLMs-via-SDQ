@@ -77,4 +77,4 @@ python train.py \
   --do_eval
 ```
 
-After training, the model weights, LoRA module weights (two `.pt` files), and training configuration (one `.json` file) are all saved in corresponding `$output_dir`.
+After training, the model weights, LoRA module weights (two `.pt` files), and training configuration (one `.json` file) will all be saved in the corresponding `$output_dir`.
