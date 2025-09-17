@@ -26,7 +26,7 @@ cd Efficient-LLMs-via-SDQ
 
 #### Convert Linear GPT2
 
-Since the weight storage shape of the Conv1D layer is `[out_features, in_features]`, while that of Linear layer is `[in_features, out_features]`, it is necessary to transpose the pre-trained weights of GPT2 and replace the original `Conv1D` layer with `Linear` layer before training.
+Since the weight storage shape of the [Conv1D](https://github.com/huggingface/transformers/blob/main/src/transformers/pytorch_utils.py#L98) layer is `[out_features, in_features]`, while that of [nn.Linear](https://github.com/pytorch/pytorch/blob/main/torch/nn/modules/linear.py#L53) layer is `[in_features, out_features]`, it is necessary to transpose the pre-trained weights of GPT2 and replace the original `Conv1D` layer with `Linear` layer before training.
 
 Run the script `scripts/convert_linear_gpt2.py`, and the model weights will be saved in `model/linear_gpt2`.
 
