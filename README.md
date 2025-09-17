@@ -1,6 +1,6 @@
 # Efficient LLMs via Switcble and Dynamic Quantization (SDQ)
 
-This is the implementation of the coding test for `EIC Lab`.
+This is the implementation of the coding test from `EIC Lab`.
 
 ## Overview
 
@@ -24,6 +24,12 @@ git clone https://github.com/xiyuLiang09/Efficient-LLMs-via-SDQ.git
 cd Efficient-LLMs-via-SDQ
 ```
 
+#### Convert Linear GPT2
+
+Since the weight storage shape of the Linear layer in PyTorch is `[out_features, in_features]`, while that in TensorFlow is `[in_features, out_features]`, it is necessary to transpose the pre-trained weights of GPT2 and replace the original `Conv1D` layer with `Linear` layer before training.
+
+Run the script `scripts/convert_linear_gpt2.py`, and the model weights will be saved in `model/linear_gpt2`.
+
 ### Training
 
 #### 1. Switchable Precision Training (SP)
@@ -31,10 +37,16 @@ cd Efficient-LLMs-via-SDQ
   The training function not only supports switchable precision training but also incorporates cascade distillation from [InstantNet](https://arxiv.org/pdf/2104.10853) to improve model performance at low precision. Use the script `run_sp.sh` in the `./scripts` folder to tune the model with SP:
 
 ```sh
-bash scripts/run_sp.sh
+bash scripts/run_sp.sh $output_dir
+```
+
+An example command:
+
+```sh
+bash scripts/run_sp.sh model/tuned_gpt2_sp
 ```
   
-  or use the following command to run the customized training parameters. Note that the `--training_strategy` should be set to `sp`:
+Or use the following command to run the customized training parameters. Note that the `--training_strategy` should be set to `sp`:
 
 ```sh
 python train.py \
@@ -53,7 +65,7 @@ python train.py \
 
 #### 2. Cyclic Precision Training (CPT)
 
-  First, perform a precision range test on the model to determine the lower bound of the precision range for cyclic precision training. Use the following command, then the visualization result will be saved directly in the current directory::
+  First, perform a precision range test on the model to determine the lower bound of the precision range for cyclic precision training. Use the following command, then the visualization result will be saved directly in the current directory:
 
 ```sh
 bash scripts/prec_range_test.sh
@@ -62,7 +74,13 @@ bash scripts/prec_range_test.sh
   To enable the training bit-widths to be changed dynamically (i.e., use the cyclic precision training), use the script `run_cpt.sh` in the `./scripts` folder directly to tune the model with cyclic precision:
 
 ```sh
-bash scripts/run_cpt.sh
+bash scripts/run_cpt.sh $output_dir
+```
+
+An example command:
+
+```sh
+bash scripts/run_cpt.sh model/tuned_gpt2_cpt
 ```
 
   Similar to using switchable precision training, you can also use the following command, but make sure to set `--training_strategy` to `cpt`:
@@ -83,8 +101,52 @@ python train.py \
   --do_eval
 ```
 
-After training, the model weights, LoRA module weights (two `.pt` files), and training configuration (one `.json` file) will all be saved in the corresponding `$output_dir` (there is no need to manually createthe folder — it will be created automatically if it does not exist, and the model weights will be saved there).
+After training, the model weights, LoRA module weights (two `.pt` files), and training configuration (one `.json` file) will all be saved in the corresponding `$output_dir` (there is no need to manually create the folder — it will be created automatically if it does not exist, and the model weights will be saved there).
 
-### Search Optimal Per-layer Quant Config
+### Search (for SP training)
+
+To determine the optimal per-layer bit-width configuration to push the accuracy-efficiency trade-off, we adopt a simple and effective greedy search algorithm to find a locally optimal solution.
+
+Use the script `run_greedy_search.sh` in the `./scripts` folder to run the greedy search. 
+
+- `$model_dir` refers to the path where the tuned model wights are saved.
+
+```sh
+bash scripts/run_greedy_search.sh $model_dir
+```
+
+An example command:
+
+```sh
+bash scripts/run_greedy_search.sh model/tuned_gpt2_sp
+```
+
+Then, the search result (i.e., the optimal per-layer bit-width configuration, which can be used in `evaluation` phase directly) will be saved in `configs/greedy_search_config.json`. Note that the process may be a bit time-consuming if there is only a single GPU.
+
+Alternatively, you can use the following command to run the customized searching parameters. The `--searching_method` should be set to `greedy`:
+
+```sh
+python bit_search.py \
+    --model_dir model/tuned_gpt2_sp \
+    --search_method greedy \
+    --output_path configs/greedy_search_config.json \
+    --low_bits 4 \
+    --high_bits 8 \
+    --lower_bound 40.34 \
+    --alpha 0.7 \
+    --batch_size 24 \
+```
 
 ### Evaluation
+
+Evaluate the tuned model with specified bit-widths configuration. Use the following command to run the customized evaluation parameters:
+
+```sh
+python eval.py \
+    --model_dir model/tuned_gpt2_sp \
+    --config_path configs/greedy_search_config.json \
+    --output_path output/tuned_gpt2_sp.json
+```
+
+- `--model_dir`: path to the folder containing the tuned model weights to be evaluated.
+- `--config_path`: path to the bit-width configuration file to be evaluated.

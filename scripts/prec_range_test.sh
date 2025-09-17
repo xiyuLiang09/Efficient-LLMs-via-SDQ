@@ -1,3 +1,4 @@
+#!/bin/bash
 python precision_range_test.py \
   --model_path model/linear_gpt2 \
   --dataset_path rajpurkar/squad \
@@ -7,5 +8,5 @@ python precision_range_test.py \
   --gradient_accumulation_steps 3 \
   --max_steps 1000 \
   --learning_rate 1e-3 \
-  --output_dir model/precision_range_test/w2a6-w12a12/ \
+  --output_dir $1 \
   --do_eval

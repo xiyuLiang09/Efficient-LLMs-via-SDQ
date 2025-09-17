@@ -1,17 +1,13 @@
-# import evaluate
-import copy
+import os
 import numpy as np
-from dataclasses import dataclass
 from typing import List, TypedDict
+from dataloader import create_data_loaders
 from metrics import eval_squad
-from utils import update_model_bits_config as update_model_bits
+from utils import load_tuned_qa_model, update_model_bits_config as update_model_bits
 from utils import (
     create_and_fill_np_array,
     format_preds,
-    load_tuned_model,
-    parse_bits_config_list,
 )
-from loralib.utils import replace_qlinear_with_loralayer, lora_state_dict
 from tqdm import tqdm
 import torch
 import argparse
@@ -24,72 +20,11 @@ class EvalScore(TypedDict):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model_dir", type=str, default="./model/fine_tuned_model_sp")  # include model and adapter
-    parser.add_argument("--low_bit", type=int, default=4)
-    parser.add_argument("--high_bit", type=int, default=16)
-    parser.add_argument("--exp_name", type=str)  # will be added to the name of json files that contain output predicions
-    # parser.add_argument("--output_path", type=str, default="./exp_outputs") # path to save the eval scores
+    parser = argparse.ArgumentParser(description="Evaluate SDQ-GPT2 Model with specific configuration")
+    parser.add_argument("--model_dir", type=str, default="model/fine_tuned_model_sp")  # include model and adapter
+    parser.add_argument("--config_path", type=str, default="configs/random_search_bits.json")
+    parser.add_argument("--output_path", type=str, default="output/greedy_search_seq.json")
     return parser.parse_args()
-
-
-def layer_wise_group(model_name: str, high_bits: int, low_bits: int):
-    """
-    Devide all layers into `num_layer_group` groups, and then allocate diffenrent bit-widths to each group. Return different bits config dict for each experiment.
-
-    """
-    # define the number of layers in the model
-    if model_name == "gpt2-base":
-        num_layer_group = 4  # 0-2, 3-5, 6-8, 9-11
-
-    if high_bits is not None and low_bits is not None:
-        assert high_bits > low_bits
-
-    layers_per_group = 12 // num_layer_group
-    layer_groups = []
-    for i in range(num_layer_group):
-        start = i * layers_per_group
-        end = start + layers_per_group - 1
-        layer_groups.append(f"{start}-{end}")
-
-    configs = []
-
-    # default = high bit-width
-    for i in range(num_layer_group):
-        config = {
-            "default": {
-                "attn": {"w_bits": high_bits, "a_bits": high_bits, "kv_bits": high_bits},
-                "mlp": {"w_bits": high_bits, "a_bits": high_bits},
-            },
-            "layers": {},
-        }
-
-        config["layers"][layer_groups[i]] = {
-            "attn": {"w_bits": low_bits, "a_bits": low_bits, "kv_bits": low_bits},
-            "mlp": {"w_bits": low_bits, "a_bits": low_bits},
-        }
-
-        configs.append(config)
-
-    # default = low bit-width
-    for i in range(num_layer_group):
-        config = {
-            "default": {
-                "attn": {"w_bits": low_bits, "a_bits": low_bits, "kv_bits": low_bits},
-                "mlp": {"w_bits": low_bits, "a_bits": low_bits},
-            },
-            "layers": {},
-        }
-
-        config["layers"][layer_groups[i]] = {
-            "attn": {"w_bits": high_bits, "a_bits": high_bits, "kv_bits": high_bits},
-            "mlp": {"w_bits": high_bits, "a_bits": high_bits},
-        }
-
-        configs.append(config)
-
-    parse_bits_config_list(configs)
-    return configs
 
 
 def _inference(model, eval_data_loader, examples, features, device, exp_name) -> EvalScore:
@@ -202,9 +137,7 @@ def compute_score_per_batch(
         # Filtering
         for start_idx in start_idxes:
             for end_idx in end_idxes:
-                # 1) answers that are out-of-scope. either because
-                # the indices are out of bounds or
-                # correspond to part of the input_ids that are not in the context.
+                # 1) answers that are out-of-scope. either because the indices are out of bounds or correspond to part of the input_ids that are not in the context.
                 if (
                     start_idx >= len(offsets)
                     or end_idx >= len(offsets)
@@ -263,60 +196,52 @@ def compute_score_per_batch(
     return eval_squad(predictions=predictions, references=references)
 
 
+# TODO: add eval func and script
 if __name__ == "__main__":
-    # from transformers import GPT2Tokenizer
-    from config import Config
-    from model.configuration_sdq import SDQConfig
-    from model.modeling_sdq_gpt2 import GPT2ForQuestionAnswering
-    from dataloader import create_data_loaders
-
     args = parse_args()
-    high_bit = args.high_bit
-    low_bit = args.low_bit
-    exp_name = args.exp_name
-    model_dir = args.tuned_ckpt_dir  # local tuned_ckpt dir
+    result = dict()
 
-    # generate bits config list
-    per_layer_configs = layer_wise_group(model_name="gpt2-base", high_bits=high_bit, low_bits=low_bit)
-    # print(json.dumps(per_layer_configs, indent=4))
+    output_path = args.ouput_path
+    if output_path is not None:
+        output_dir = os.path.dirname(output_path)
+        os.makedirs(output_dir, exist_ok=True)
 
-    # load model
-    sdq_config = SDQConfig.from_pretrained("gpt2")
-    sdq_config.bits_config = per_layer_configs[-1]
-    model = GPT2ForQuestionAnswering(config=sdq_config)
-    replace_qlinear_with_loralayer(model, Config.lora_bits_configs)
-    load_tuned_model(model, model_dir)
-
+    # Load model
+    model = load_tuned_qa_model(model_dir=args.model_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+
+    # Load eval bits config list
+    config = json.load(open(args.config_path))
+    eval_bits_config_list = config["eval_bits_config_list"]
+    if hasattr(config, "bits_config"):
+        bits_config = config["bits_config"]
+        update_model_bits(model, bits_config=bits_config)
+    
+    # Add configs to result
+    result["eval_config"] = args.__dict__
+    result["model_config"] = model.config.to_dict()
+    result["eval_bits_config_list"] = eval_bits_config_list
 
     # load validation dataset
     _, eval_data_loader, eval_examples, eval_dataset = create_data_loaders(
         "rajpurkar/squad",
-        batch_size=Config.batch_size,
+        batch_size=64,
     )
 
-    # evaluation
+    # Evaluation
     scores = inference(
         model,
         eval_data_loader=eval_data_loader,
         examples=eval_examples,
         features=eval_dataset,
-        eval_bits_config_list=per_layer_configs,
         device=device,
-        exp_name=exp_name,
+        exp_name="eval",
+        eval_bits_config_list=eval_bits_config_list,
     )
-    print(scores)
-
-"""
-python eval.py \
-    --tuned_ckpt_dir ./model/fine_tuned_model_sp \
-    --low_bit 4 \
-    --high_bit 16 \
-    --exp_name h16_l4
-python eval.py \
-    --tuned_ckpt_dir model/tuned_gpt2_sp/2j00nb2k/ckpt_2 \
-    --low_bit 4 \
-    --high_bit 16 \
-    --exp_name h16_l4_2j00nb2k
-"""
+    
+    # Save result
+    result["scores"] = scores
+    with open(output_path, "w") as f:
+        json.dump(result, f, indent=4)
+    

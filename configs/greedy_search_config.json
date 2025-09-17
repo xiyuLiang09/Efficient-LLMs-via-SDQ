@@ -1,0 +1,81 @@
+{
+    "default": {
+        "attn": {
+            "w_bits": 8,
+            "a_bits": 8,
+            "kv_bits": 16
+        },
+        "mlp": {
+            "w_bits": 8,
+            "a_bits": 8
+        }
+    },
+    "layers": {
+        "layer_10": {
+            "attn": {
+                "w_bits": 4,
+                "a_bits": 6,
+                "kv_bits": 16
+            },
+            "mlp": {
+                "w_bits": 4,
+                "a_bits": 6
+            }
+        },
+        "layer_1": {
+            "attn": {
+                "w_bits": 4,
+                "a_bits": 6,
+                "kv_bits": 16
+            },
+            "mlp": {
+                "w_bits": 4,
+                "a_bits": 6
+            }
+        },
+        "layer_0": {
+            "attn": {
+                "w_bits": 4,
+                "a_bits": 6,
+                "kv_bits": 16
+            },
+            "mlp": {
+                "w_bits": 4,
+                "a_bits": 6
+            }
+        },
+        "layer_3": {
+            "attn": {
+                "w_bits": 4,
+                "a_bits": 6,
+                "kv_bits": 16
+            },
+            "mlp": {
+                "w_bits": 4,
+                "a_bits": 6
+            }
+        },
+        "layer_11": {
+            "attn": {
+                "w_bits": 4,
+                "a_bits": 6,
+                "kv_bits": 16
+            },
+            "mlp": {
+                "w_bits": 4,
+                "a_bits": 6
+            }
+        },
+        "layer_6": {
+            "attn": {
+                "w_bits": 4,
+                "a_bits": 6,
+                "kv_bits": 16
+            },
+            "mlp": {
+                "w_bits": 4,
+                "a_bits": 6
+            }
+        }
+    }
+}

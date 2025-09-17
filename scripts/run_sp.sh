@@ -1,4 +1,5 @@
-python train_with_wandb.py \
+#!/bin/bash
+python train.py \
   --model_path model/linear_gpt2 \
   --dataset_path rajpurkar/squad \
   --training_strategy sp \
@@ -9,5 +10,5 @@ python train_with_wandb.py \
   --learning_rate 1e-3 \
   --lr_schedule cosine \
   --distill_weight 1 \
-  --output_dir model/tuned_gpt2_sp/bits_4_8_1e-3 \
+  --output_dir $1 \
   --do_eval
