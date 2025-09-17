@@ -1,0 +1,11 @@
+python precision_range_test.py \
+  --model_path model/linear_gpt2 \
+  --dataset_path rajpurkar/squad \
+  --precision_range 2 12 \
+  --num_epochs 1 \
+  --batch_size 24 \
+  --gradient_accumulation_steps 3 \
+  --max_steps 1000 \
+  --learning_rate 1e-3 \
+  --output_dir model/precision_range_test/w2a6-w12a12/ \
+  --do_eval
