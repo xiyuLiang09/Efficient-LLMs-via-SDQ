@@ -9,12 +9,8 @@ from tqdm import tqdm
 from transformers import GPT2TokenizerFast
 from transformers.optimization import get_scheduler
 
-import wandb
-
-# from dataloader import create_data_loaders
 from dataloader import create_data_loaders
 
-# from eval import inference
 from loralib.utils import (
     mark_only_lora_as_trainable,
     replace_qlinear_with_loralayer,
@@ -52,7 +48,6 @@ def parse_args():
 
 def train(
     model,
-    run: wandb.Run,
     train_dataloader,
     optimizer,
     lr_scheduler,
@@ -112,7 +107,7 @@ def train(
                 optimizer.step()
                 optimizer.zero_grad()
 
-                batch_time = time.time() - batch_start_time
+                # batch_time = time.time() - batch_start_time
                 progress_bar.set_postfix(
                     {
                         "loss": f"{step_loss:.4f}",
@@ -121,15 +116,15 @@ def train(
                     }
                 )
 
-                log_data = {
-                    "train/loss": step_loss,
-                    "train/learning_rate": optimizer.param_groups[0]["lr"],
-                    "train/batch_time": batch_time,
-                    "eval/exact_match": score["exact_match"],
-                    "eval/f1": score["f1"],
-                }
-                if run:
-                    run.log(log_data, step=global_step)
+                # log_data = {
+                #     "train/loss": step_loss,
+                #     "train/learning_rate": optimizer.param_groups[0]["lr"],
+                #     "train/batch_time": batch_time,
+                #     "eval/exact_match": score["exact_match"],
+                #     "eval/f1": score["f1"],
+                # }
+                # if run:
+                #     run.log(log_data, step=global_step)
 
                 global_step += 1
                 step_loss = 0
@@ -157,100 +152,91 @@ def train(
 def main():
     args = parse_args()
     w_bits, a_bits, kv_bits = args.bits
+    init_bits_config = {
+        "default": {
+            "attn": {"w_bits": w_bits, "a_bits": a_bits, "kv_bits": kv_bits},
+            "mlp": {"w_bits": w_bits, "a_bits": a_bits},
+        },
+        "layers": {},
+    }
+    lora_bits_configs = {
+        "default": {"r": 8, "lora_alpha": 16, "lora_dropout": 0.1},
+    }
+    model_config = SDQConfig.from_pretrained(args.model_path)
+    model_config.bits_config = init_bits_config
+    model_config.lora_bit_configs = lora_bits_configs
+    model = GPT2ForQuestionAnswering.from_pretrained(args.model_path, config=model_config)
 
-    with wandb.init(
-        project="sdq-gpt2",
-        name=f"static_qat_w{w_bits}a{a_bits}kv{kv_bits}",
-        config={**args.__dict__},
-        settings=wandb.Settings(init_timeout=120),
-    ) as run:
-        bits_config = {
-            "default": {
-                "attn": {"w_bits": w_bits, "a_bits": a_bits, "kv_bits": kv_bits},
-                "mlp": {"w_bits": w_bits, "a_bits": a_bits},
-            },
-            "layers": {},
-        }
-        lora_bits_configs = {
-            "default": {"r": 8, "lora_alpha": 16, "lora_dropout": 0.1},
-        }
-        model_config = SDQConfig.from_pretrained(args.model_path)
-        model_config.bits_config = bits_config
-        model_config.lora_bit_configs = lora_bits_configs
-        model = GPT2ForQuestionAnswering.from_pretrained(args.model_path, config=model_config)
+    replace_qlinear_with_loralayer(model, lora_bits_configs)
+    mark_only_lora_as_trainable(model)
 
-        replace_qlinear_with_loralayer(model, lora_bits_configs)
-        # model = load_tuned_qa_model(model_dir="model/static_qat_train/w8a8kv16")
-        mark_only_lora_as_trainable(model)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
+    # Load dataset
+    train_dataloader, eval_data_loader, eval_examples, eval_dataset = create_data_loaders(
+        args.dataset_path, args.batch_size, batch_eval=True
+    )
 
-        # Load data
-        train_dataloader, eval_data_loader, eval_examples, eval_dataset = create_data_loaders(
-            args.dataset_path, args.batch_size, batch_eval=True
-        )
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=args.learning_rate, weight_decay=args.weight_decay)
 
-        trainable_params = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.AdamW(trainable_params, lr=args.learning_rate, weight_decay=args.weight_decay)
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    num_training_steps = args.max_steps if args.max_steps > 0 else args.num_epochs * num_update_steps_per_epoch
+    warmup_steps = int(num_training_steps * 0.1)
 
-        num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-        num_training_steps = args.max_steps if args.max_steps > 0 else args.num_epochs * num_update_steps_per_epoch
-        warmup_steps = int(num_training_steps * 0.1)
+    lr_scheduler = get_scheduler(
+        name=args.lr_schedule,
+        optimizer=optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=num_training_steps,
+    )
 
-        lr_scheduler = get_scheduler(
-            name=args.lr_schedule,
-            optimizer=optimizer,
-            num_warmup_steps=warmup_steps,
-            num_training_steps=num_training_steps,
-        )
+    # Add suffix to $output_dir and save training configuration to $output_dir/train_config.json
+    output_dir = args.output_dir
+    if output_dir is not None:
+        output_dir = os.path.join(output_dir, f"w{w_bits}a{a_bits}kv{kv_bits}_8000/")
+        os.makedirs(output_dir, exist_ok=True)
+        config_path = os.path.join(output_dir, "train_config.json")
+        with open(config_path, "w") as f:
+            json.dump(args.__dict__, f, indent=4)
 
-        # Save config.json and model.pt
-        output_dir = args.output_dir
-        if output_dir is not None:
-            output_dir = os.path.join(output_dir, f"w{w_bits}a{a_bits}kv{kv_bits}_8000/")
-            os.makedirs(output_dir, exist_ok=True)
-            config_path = os.path.join(output_dir, "train_config.json")
-            with open(config_path, "w") as f:
-                json.dump(args.__dict__, f, indent=4)
+    # Train
+    train(
+        model,
+        train_dataloader=train_dataloader,
+        lr_scheduler=lr_scheduler,
+        optimizer=optimizer,
+        device=device,
+        num_epochs=args.num_epochs,
+        max_steps=args.max_steps,
+        eval_steps=args.eval_steps,
+        do_eval=args.do_eval,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,  # if GPU memory is not enough, increase this param.
+        eval_examples=eval_examples,
+        eval_features=eval_dataset,
+        eval_data_loader=eval_data_loader,
+    )
 
-        # Train
-        train(
+    # Save fine-tuned model
+    if output_dir is not None:
+        save_tuned_model(model, output_dir=output_dir)
+
+    # Evaluation
+    if args.do_eval:
+        scores = inference(
             model,
-            run=run,
-            train_dataloader=train_dataloader,
-            lr_scheduler=lr_scheduler,
-            optimizer=optimizer,
-            device=device,
-            num_epochs=args.num_epochs,
-            max_steps=args.max_steps,
-            eval_steps=args.eval_steps,
-            do_eval=args.do_eval,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,  # if GPU memory is not enough, increase this param.
-            eval_examples=eval_examples,
-            eval_features=eval_dataset,
             eval_data_loader=eval_data_loader,
+            examples=eval_examples,
+            features=eval_dataset,
+            device=device,
+            exp_name="static_qat_train",
         )
-
-        # Save fine-tuned model
-        if output_dir is not None:
-            save_tuned_model(model, output_dir=output_dir)
-
-        # Evaluation
-        if args.do_eval:
-            scores = inference(
-                model,
-                eval_data_loader=eval_data_loader,
-                examples=eval_examples,
-                features=eval_dataset,
-                device=device,
-                exp_name="static_qat_train",
-            )
-            print(scores)
+        print(scores)
 
 
 if __name__ == "__main__":
-    os.environ["WANDB_MODE"] = "offline"
+    # os.environ["WANDB_MODE"] = "offline"
     main()
 
 """
