@@ -346,8 +346,8 @@ def main():
 
 
 if __name__ == "__main__":
-    # os.environ["WANDB_MODE"] = "offline"
     main()
+
 """
 python precision_range_test.py \
   --model_path model/linear_gpt2 \
