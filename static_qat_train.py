@@ -19,20 +19,15 @@ from loralib.utils import (
     mark_only_lora_as_trainable,
     replace_qlinear_with_loralayer,
 )
-from metrics import eval_squad
+
 from model.configuration_sdq import SDQConfig
 from model.modeling_sdq_gpt2 import GPT2ForQuestionAnswering
 from eval import compute_score_per_batch, inference
-from utils import (
-    create_and_fill_np_array,
-    format_preds,
-    load_tuned_qa_model,
-    save_tuned_model,
-)
+from utils import save_tuned_model
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train SDQ-GPT2 Model")
+    parser = argparse.ArgumentParser(description="Static Quantization for GPT-2 Model")
 
     # model and dataset path
     parser.add_argument("--model_path", type=str, required=True, help="Path to the pretrained GPT2 model")

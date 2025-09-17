@@ -1,20 +1,16 @@
 import argparse
-import collections
 import json
-import math
 import os
 import time
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Tuple
 
+from matplotlib import pyplot as plt
 import numpy as np
 import torch
-import torch.nn as nn
 from tqdm import tqdm
 from transformers import GPT2TokenizerFast
-from transformers.optimization import get_scheduler
 
-import wandb
 from dataloader import create_data_loaders
 from eval import compute_score_per_batch, inference
 
@@ -23,21 +19,21 @@ from loralib.utils import (
     mark_only_lora_as_trainable,
     replace_qlinear_with_loralayer,
 )
-from metrics import eval_squad
 from model.configuration_sdq import SDQConfig
 from model.modeling_sdq_gpt2 import GPT2ForQuestionAnswering
 from utils import (
-    create_and_fill_np_array,
     cyclic_adjust_precision,
-    format_preds,
     get_bits_config,
     save_tuned_model,
 )
 from utils import update_model_bits_config as update_model_bits
 
-
+records = {
+    "exact_match": [],
+    "f1": [],
+}
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train SDQ-GPT2 Model")
+    parser = argparse.ArgumentParser(description="Precision Range Test")
 
     # model and dataset path
     parser.add_argument("--model_path", type=str, required=True, help="Path to the pretrained GPT2 model")
@@ -48,16 +44,13 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=24)
     parser.add_argument("--learning_rate", type=float, default=2e-4)
     parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--momentum", type=float, default=0.9)
-    parser.add_argument("--lr_schedule", type=str, default="cosine")
+
     parser.add_argument("--max_steps", type=int, default=-1)
     parser.add_argument("--eval_steps", type=int, default=-1)
     parser.add_argument("--ckpt_steps", type=int, default=-1)
     parser.add_argument("--do_eval", action="store_true")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=3)
 
-    parser.add_argument("--num_cyclic_period", type=int, default=5)
-    parser.add_argument("--cyclic_num_bits_schedule", type=int, nargs=2, default=(4, 8))
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument(
         "--precision_range", type=int, nargs=2, required=True, help="Precision range with format (low_bits, high_bits)"
@@ -67,7 +60,6 @@ def parse_args():
 
 def train(
     model,
-    run: wandb.Run,
     precision_range: Tuple,
     train_dataloader,
     optimizer,
@@ -145,15 +137,17 @@ def train(
                     }
                 )
 
-                log_data = {
-                    "train/loss": step_loss,
-                    "train/learning_rate": optimizer.param_groups[0]["lr"],
-                    "train/batch_time": batch_time,
-                    "eval/exact_match": score["exact_match"],
-                    "eval/f1": score["f1"],
-                }
-                if run:
-                    run.log(log_data)
+                # log_data = {
+                #     "train/loss": step_loss,
+                #     "train/learning_rate": optimizer.param_groups[0]["lr"],
+                #     "train/batch_time": batch_time,
+                #     "eval/exact_match": score["exact_match"],
+                #     "eval/f1": score["f1"],
+                # }
+                # if run:
+                #     run.log(log_data)
+                records["exact_match"].append(score["exact_match"])
+                records["f1"].append(score["f1"])
 
                 global_step += 1
                 step_loss = 0
@@ -170,95 +164,189 @@ def train(
                     )
                     print(score)
 
-                #     eval_log_data = {
-                #         "eval/exact_match": score["exact_match"],
-                #         "eval/f1": score["f1"],
-                #     }
-                #     run.log(eval_log_data)
-                #     model.train()  # switch to training mode after validation
-
                 # Control iterations
                 if max_steps > 0 and global_step >= max_steps:
                     break
 
+            # Save checkpoint per ckpt_steps if output_dir is provided
             if ckpt_steps > 0 and global_step % ckpt_steps == 0 and output_dir is not None:
-                # if output_dir is not None:
                 ckpt_dir = f"{output_dir}/ckpt_{(global_step + 1) // ckpt_steps}"
                 save_tuned_model(model, output_dir=ckpt_dir)
 
     end_time = time.time()
     print(f"Training completed in {end_time - start_time:.2f} seconds.")
 
+def acc_visualization(output_dir: str, dpi=300):
+    """Visualization"""
+    title_fs = 16  
+    axis_label_fs = 18  
+    bit_label_fs = 14  
+    tick_fs = 12   
+
+    def interp_nan(y: np.ndarray) -> np.ndarray:
+        y = np.asarray(y, dtype=float)
+        n = len(y)
+
+        if n == 0:
+            return y
+        idx = np.arange(n)
+        good = np.isfinite(y)
+
+        if not np.any(good):
+            return np.zeros_like(y, dtype=float)
+        y_interp = y.copy()
+
+        first, last = idx[good][0], idx[good][-1]
+        y_interp[:first] = y[good][0]
+        y_interp[last + 1 :] = y[good][-1]
+
+        mask = ~good
+        y_interp[mask] = np.interp(idx[mask], idx[good], y[good])
+        return y_interp
+
+    # smoothing (default window length = 100)
+    def running_average(y: np.ndarray, window_size: int) -> np.ndarray:
+        y = np.asarray(y, dtype=float)
+        n = len(y)
+        if n == 0:
+            return y
+        
+        w = min(window_size, n)
+        if w < 3:
+            w = 3
+       
+        if w % 2 == 0:
+            w += 1
+        smoothed = np.convolve(y, np.ones(w) / w, mode="same")
+        
+        if w > 1:
+            tail_idx = min(w, n) - 1
+            smoothed[-(w - 1) :] = smoothed[-tail_idx]
+        return smoothed
+
+    em_raw = np.asarray(records.get("exact_match", []), dtype=float)
+    f1_raw = np.asarray(records.get("f1", []), dtype=float)
+
+    em = interp_nan(em_raw)
+    f1 = interp_nan(f1_raw)
+
+    n = len(em)
+    if n == 0:
+        raise ValueError("Records['exact_match'] is empty, cannot create the curve")
+
+    x = np.arange(n)
+
+    win = 100  
+    em_smooth = running_average(em, win)
+    f1_smooth = running_average(f1, win)
+
+    # create figure
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # EM：raw + smooth
+    ax.plot(x, em, label="Exact Match (Raw)")
+    ax.plot(x, em_smooth, linewidth=2.0, label=f"Exact Match (Smoothed, Window={min(win, len(em))})")
+
+    # # F1：raw + smooth
+    # ax.plot(x, f1, label="F1 (Raw)")
+    # ax.plot(x, f1_smooth, linewidth=2.0, label=f"F1 (Smoothed, Window={min(win, len(f1))})")
+
+    ax.grid(False)
+
+    start_v = int(np.floor(x.min() / 100.0) * 100)
+    end_v = int(np.ceil(x.max() / 100.0) * 100)
+    for v in range(start_v, end_v + 1, 100):
+        ax.axvline(x=v, color="gray", linestyle="--", linewidth=1)
+
+    num_segments = max(1, (end_v - start_v) // 100) 
+    for i in range(num_segments):
+        bit = 2 + i 
+        left, right = i * 100, (i + 1) * 100
+        xc = (left + right) / 2.0
+        ax.text(
+            xc,
+            0.95,
+            f"{bit}-bit",
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="top",
+            fontsize=bit_label_fs,
+        )
+
+    ax.set_title("Exact Match per Step", fontsize=title_fs)
+    ax.set_xlabel("Iterations", fontsize=axis_label_fs)
+    ax.set_ylabel("Score", fontsize=axis_label_fs)
+
+    ax.tick_params(axis="both", which="major", labelsize=tick_fs)
+    ax.legend()
+    plt.tight_layout()
+    
+    png_save_path = os.path.join(output_dir, "prt_result.png")
+    plt.savefig(png_save_path, dpi=dpi, bbox_inches="tight")
+    print(f"Saving PRT result to {png_save_path}")
 
 def main():
     args = parse_args()
-    print(f"learning rate: {args.learning_rate}")
 
-    with wandb.init(
-        project="sdq-gpt2",
-        name="precision_range_test",
-        config={**args.__dict__},
-        settings=wandb.Settings(init_timeout=120),
-    ) as run:
-        bits_config = {
-            "default": {"attn": {"w_bits": 4, "a_bits": 4, "kv_bits": 16}, "mlp": {"w_bits": 4, "a_bits": 4}},
-            "layers": {},
-        }
-        lora_bits_configs = {
-            "default": {"r": 8, "lora_alpha": 16, "lora_dropout": 0.1},
-        }
-        model_config = SDQConfig.from_pretrained(args.model_path)
-        model_config.bits_config = bits_config
-        model = GPT2ForQuestionAnswering.from_pretrained(args.model_path, config=model_config)
-        replace_qlinear_with_loralayer(model, lora_bits_configs)
-        mark_only_lora_as_trainable(model)
+    init_bits_config = {
+        "default": {"attn": {"w_bits": 4, "a_bits": 4, "kv_bits": 16}, "mlp": {"w_bits": 4, "a_bits": 4}},
+        "layers": {},
+    }
+    lora_bits_config = {
+        "default": {"r": 8, "lora_alpha": 16, "lora_dropout": 0.1},
+    }
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
+    model_config = SDQConfig.from_pretrained(args.model_path)
+    model_config.bits_config = init_bits_config
+    model = GPT2ForQuestionAnswering.from_pretrained(args.model_path, config=model_config)
+    replace_qlinear_with_loralayer(model, lora_bits_config)
+    mark_only_lora_as_trainable(model)
 
-        # Load data
-        train_dataloader, eval_data_loader, eval_examples, eval_dataset = create_data_loaders(
-            args.dataset_path, args.batch_size, batch_eval=True
-        )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
-        trainable_params = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.AdamW(trainable_params, lr=args.learning_rate, weight_decay=args.weight_decay)
+    # Load dataset
+    train_dataloader, eval_data_loader, eval_examples, eval_dataset = create_data_loaders(
+        args.dataset_path, args.batch_size, batch_eval=True
+    )
 
-        # Add suffix to output_dir and save config.json and model.pt
-        output_dir = args.output_dir
-        if output_dir is not None:
-            os.makedirs(output_dir, exist_ok=True)
-            config_path = os.path.join(output_dir, "train_config.json")
-            with open(config_path, "w") as f:
-                json.dump(args.__dict__, f, indent=4)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=args.learning_rate, weight_decay=args.weight_decay)
 
-        # Train
-        train(
-            model,
-            run=run,
-            precision_range=args.precision_range,
-            train_dataloader=train_dataloader,
-            optimizer=optimizer,
-            device=device,
-            num_epochs=args.num_epochs,
-            max_steps=args.max_steps,
-            eval_steps=args.eval_steps,
-            ckpt_steps=args.ckpt_steps,
-            do_eval=args.do_eval,
-            output_dir=output_dir,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,  # if GPU memory is not enough, increase this param.
-            eval_examples=eval_examples,
-            eval_features=eval_dataset,
-            eval_data_loader=eval_data_loader,
-        )
+    # Save training configuration to $output_dir/train_config.json
+    output_dir = args.output_dir
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        config_path = os.path.join(output_dir, "train_config.json")
+        with open(config_path, "w") as f:
+            json.dump(args.__dict__, f, indent=4)
 
-        # Save fine-tuned model
-        if output_dir is not None:
-            save_tuned_model(model, output_dir=output_dir)
+    # Train
+    train(
+        model,
+        precision_range=args.precision_range,
+        train_dataloader=train_dataloader,
+        optimizer=optimizer,
+        device=device,
+        num_epochs=args.num_epochs,
+        max_steps=args.max_steps,
+        eval_steps=args.eval_steps,
+        ckpt_steps=args.ckpt_steps,
+        do_eval=args.do_eval,
+        output_dir=output_dir,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,  # if GPU memory is not enough, increase this param.
+        eval_examples=eval_examples,
+        eval_features=eval_dataset,
+        eval_data_loader=eval_data_loader,
+    )
+    
+    # Visualize and save PRT result
+    acc_visualization(output_dir=output_dir)
+    json.dump(records, open(os.path.join(output_dir, "records.json"), "w"))
 
 
 if __name__ == "__main__":
-    os.environ["WANDB_MODE"] = "offline"
+    # os.environ["WANDB_MODE"] = "offline"
     main()
 """
 python precision_range_test.py \
