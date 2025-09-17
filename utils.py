@@ -1,7 +1,6 @@
 import collections
 import copy
 import json
-import math
 import os
 import re
 from pathlib import Path
@@ -46,12 +45,11 @@ def parse_bits_config_list(bits_config_list):
 
 
 def get_layer_bits_config(bits_config, layer_idx: int) -> Dict[str, Dict[str, int]]:
-    """
-    Get layer-specific bits configuration for a given layer index.
+    """Get layer-specific bits configuration for a given layer index.
 
     Args:
-        bits_config: The bits configuration for the model.
-        layer_idx(int): The index of the layer.
+        bits_config: the bits configuration for the model.
+        layer_idx(int): the index of the layer.
 
     Returns:
         A dictionary containing the layer-specific bits configuration.
@@ -64,6 +62,15 @@ def get_layer_bits_config(bits_config, layer_idx: int) -> Dict[str, Dict[str, in
 
 
 def update_model_bits_config(model, bits_config) -> None:
+    """ 
+    Update the quantization bits configuration of the model.
+
+    Args:
+        model (nn.Module): the model to update.
+        bits_config (dict): bits config used to update the model.
+    Returns:
+        None
+    """
     bits_config = copy.deepcopy(bits_config)
     for layer_idx, block in enumerate(model.transformer.h):
         # Get layer-specific config or default config
@@ -86,6 +93,16 @@ def update_model_bits_config(model, bits_config) -> None:
 
 
 def cyclic_adjust_precision(cyclic_num_bits_schedule, iter, cyclic_period):
+    """
+    Adjust quantization precision cyclically
+
+    Args:
+        cyclic_num_bits_schedule (list): [min_num_bits, max_num_bits]
+        iter (int): current iteration number
+        cyclic_period (int): length of a cycle
+    Return:
+        int: quantization precision for the current iteration
+    """
     assert len(cyclic_num_bits_schedule) == 2
 
     num_bit_min = cyclic_num_bits_schedule[0]
@@ -109,16 +126,16 @@ def cyclic_adjust_bits_config(bits_config_list: List, current_iter: int, cyclic_
 
 def save_tuned_model(model: GPT2ForQuestionAnswering, output_dir: str | Path) -> None:
     """
-    Saves a LoRA-tuned model by separating and storing the base model weights and LoRA adapter weights.
+    Save a LoRA-tuned model by separating and storing the base model weights and LoRA adapter weights.
 
-    This function saves two components of a fine-tuned model:
-    1. `model.pt`: The full state dictionary of the base model (including any modifications from tuning)
-    2. `adapter.pt`: The LoRA-specific adapter weights, isolated from the base model parameters
+    There are two components of a fine-tuned model:
+    1. `model.pt`: the full state dictionary of the tuned model
+    2. `adapter.pt`: the LoRA-specific adapter weights, isolated from the base model parameters
 
     Args:
-        model: The LoRA-tuned model. Should be a PEFT-wrapped model or compatible
+        model: LoRA-tuned model. Should be a PEFT-wrapped model or compatible
             with the `lora_state_dict` function to extract adapter weights.
-        output_dir: Path to the directory where the model files will be saved.
+        output_dir: path to the directory where the model files will be saved.
             The directory will be created if it does not already exist.
     """
     os.makedirs(output_dir, exist_ok=True)
@@ -132,12 +149,8 @@ def save_tuned_model(model: GPT2ForQuestionAnswering, output_dir: str | Path) ->
 
 def load_tuned_qa_model(model_dir: str | Path, active_lora: bool = True) -> GPT2ForQuestionAnswering:
     """
-    Loads a LoRA-tuned model by restoring both base model weights and LoRA adapter weights.
-
-    This function reconstructs a previously saved LoRA-tuned model by loading two components:
-    1. `model.pt`: The full state dictionary of the base model (with tuning modifications)
-    2. `adapter.pt`: The LoRA-specific adapter weights
-
+    Load a LoRA-tuned model by restoring both base model weights and LoRA adapter weights.
+    
     - The loaded weights are applied to the provided base model in sequence, first loading
     the base model weights followed by the LoRA adapter weights. Non-matching keys between
     the saved state dicts and the model are ignored by setting `strict=False`.
@@ -166,28 +179,21 @@ def load_tuned_qa_model(model_dir: str | Path, active_lora: bool = True) -> GPT2
     return model
 
 
-def load_tuned_model(model: nn.Module, model_dir: str | Path) -> None:
-    """
-    Loads a LoRA-tuned model by restoring both base model weights and LoRA adapter weights.
+# Deprecated, use load_tuned_qa_model instead
+# def load_tuned_model(model: nn.Module, model_dir: str | Path) -> None:
+#     """
+#     Loads a LoRA-tuned model by restoring both base model weights and LoRA adapter weights.
 
-    This function reconstructs a previously saved LoRA-tuned model by loading two components:
-    1. `model.pt`: The full state dictionary of the base model (with tuning modifications)
-    2. `adapter.pt`: The LoRA-specific adapter weights
-
-    - The loaded weights are applied to the provided base model in sequence, first loading
-    the base model weights followed by the LoRA adapter weights. Non-matching keys between
-    the saved state dicts and the model are ignored by setting `strict=False`.
-
-    Args:
-        model: Base model architecture to load the weights into. Should match the
-            architecture of the original model used for fine-tuning.
-        model_dir: Path to the directory containing the saved model files (`model.pt`
-            and `adapter.pt`).
-    """
-    model_path = os.path.join(model_dir, "model.pt")
-    adapter_path = os.path.join(model_dir, "adapter.pt")
-    model.load_state_dict(torch.load(model_path), strict=False)
-    model.load_state_dict(torch.load(adapter_path), strict=False)
+#     Args:
+#         model: Base model architecture to load the weights into. Should match the
+#             architecture of the original model used for fine-tuning.
+#         model_dir: Path to the directory containing the saved model files (`model.pt`
+#             and `adapter.pt`).
+#     """
+#     model_path = os.path.join(model_dir, "model.pt")
+#     adapter_path = os.path.join(model_dir, "adapter.pt")
+#     model.load_state_dict(torch.load(model_path), strict=False)
+#     model.load_state_dict(torch.load(adapter_path), strict=False)
 
 
 # Create and fill numpy array of size len_of_validation_data * max_length_of_output_tensor
@@ -208,7 +214,6 @@ def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
     logits_concat = np.full((len(dataset), max_len), -100, dtype=np.float64)
 
     for i, output_logit in enumerate(start_or_end_logits):  # populate columns
-        # We have to fill it such that we have to take the whole tensor and replace it on the newly created array And after every iteration we have to change the step
         batch_size = output_logit.shape[0]
         cols = output_logit.shape[1]
 
@@ -233,7 +238,7 @@ def postprocess_preds(
     prefix: Optional[str] = None,
 ):
     """
-    Post-processing utilities for question-answering tasks(SQuAD v1 only).
+    Post-processing model output for question-answering tasks (SQuAD v1 only).
 
     Args:
         examples (:obj:`List[datasets.Dataset]`): The non-preprocessed dataset.
@@ -266,10 +271,6 @@ def postprocess_preds(
     all_preds = collections.OrderedDict()
     all_nbest_json = collections.OrderedDict()
 
-    # TODO: add logger
-    # logger.setLevel(log_level)
-    # logger.info(f"Post-processing {len(examples)} example predictions split into {len(features)} features.")
-
     for examples_idx, example in enumerate(tqdm(examples)):
         feature_indices = features_per_example[examples_idx]
         prelim_preds = []
@@ -290,9 +291,7 @@ def postprocess_preds(
             # Filtering
             for start_idx in start_idxes:
                 for end_idx in end_idxes:
-                    # 1) answers that are out-of-scope. either because
-                    # the indices are out of bounds or
-                    # correspond to part of the input_ids that are not in the context.
+                    # 1) answers that are out-of-scope. either because the indices are out of bounds or correspond to part of the input_ids that are not in the context.
                     if (
                         start_idx >= len(offset_mapping)
                         or end_idx >= len(offset_mapping)
@@ -339,7 +338,6 @@ def postprocess_preds(
             )
 
         # Compute softmax scores
-        # TODO: why do we use torch.nn.functional.softmax here?
         scores = np.array([pred.pop("score") for pred in preds_sorted])
         exp_scores = np.exp(scores - np.max(scores))  # exp(x - Logsumexp(x))
         probs = exp_scores / exp_scores.sum()
@@ -367,13 +365,10 @@ def postprocess_preds(
             output_dir, "nbest_predictions.json" if prefix is None else f"{prefix}_nbest_predictions.json"
         )
 
-        # TODO: add logger
-        # logger.info(f"Saving predictions to {prediction_file}.")
         print(f"Saving predictions to {prediction_file}")
         with open(prediction_file, "w", encoding="utf-8") as writer:
             writer.write(json.dumps(all_preds, ensure_ascii=False, indent=4) + "\n")
 
-        # logger.info(f"Saving nbest_preds to {nbest_file}.")
         print(f"Saving nbest predictions to {nbest_file}")
         with open(nbest_file, "w", encoding="utf-8") as writer:
             writer.write(json.dumps(all_nbest_json, ensure_ascii=False, indent=4) + "\n")

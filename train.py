@@ -38,7 +38,6 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=24)
     parser.add_argument("--learning_rate", type=float, default=2e-4)
     parser.add_argument("--weight_decay", type=float, default=0.01)
-    # parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--lr_schedule", type=str, default="cosine")
     parser.add_argument("--max_steps", type=int, default=-1)
     parser.add_argument("--eval_steps", type=int, default=-1)
@@ -207,7 +206,7 @@ def train(
                     print(f"Update num_bits from {last_num_bits} to {num_bits}")
                     last_num_bits = num_bits
 
-                # when the input bit-width is a dict, use `cyclic_adjust_bits_config`
+                # when the input bit-width is a dict, use logic below:
                 # bits_config_idx = cyclic_adjust_bits_config(
                 #     bits_config_list=bits_config_list,
                 #     current_iter=global_step,
@@ -245,7 +244,6 @@ def train(
                     lr_scheduler.step()
                     optimizer.zero_grad()
 
-                    batch_time = time.time() - batch_start_time
                     progress_bar.set_postfix(
                         {
                             "loss": f"{step_loss:.4f}",
@@ -424,5 +422,4 @@ def main():
 
 
 if __name__ == "__main__":
-    os.environ["WANDB_MODE"] = "offline"
     main()
