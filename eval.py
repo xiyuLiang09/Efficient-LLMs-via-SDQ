@@ -196,7 +196,6 @@ def compute_score_per_batch(
     return eval_squad(predictions=predictions, references=references)
 
 
-# TODO: add eval func and script
 if __name__ == "__main__":
     args = parse_args()
     result = dict()
