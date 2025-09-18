@@ -141,7 +141,7 @@ To validate the effectiveness of our search method, 20 randomly selected bit-wid
 
 <!-- ![20 random search vs greedy search](./figures/rdm_search_res.png) -->
 <div align="center">
-  <img src="https://github.com/xiyuLiang09/Efficient-LLMs-via-SDQ/tree/main/figures/rdm_search_res.png" width="400" height="330" />
+  <img src="https://github.com/xiyuLiang09/Efficient-LLMs-via-SDQ/blob/main/figures/rdm_search_res.png" width="400" height="330" />
 </div>
 
 ### Evaluation
