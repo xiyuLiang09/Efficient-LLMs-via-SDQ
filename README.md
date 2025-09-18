@@ -137,6 +137,13 @@ python bit_search.py \
     --batch_size 24 \
 ```
 
+To validate the effectiveness of our search method, 20 randomly selected bit-width configurations are used to evaluate. In random search, the numbers of `high-bit` and `low-bit` layers are the **same** as in greedy search. The comparison results after 20 runs of random search are as follows:
+
+<!-- ![20 random search vs greedy search](./figures/rdm_search_res.png) -->
+<div align="center">
+  <img src="https://github.com/xiyuLiang09/Efficient-LLMs-via-SDQ/tree/main/figures/rdm_search_res.png" width="400" height="330" />
+</div>
+
 ### Evaluation
 
 Evaluate the tuned model with specified bit-widths configuration. Use the following command to run the customized evaluation parameters:
