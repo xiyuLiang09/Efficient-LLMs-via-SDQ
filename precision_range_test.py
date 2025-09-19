@@ -281,7 +281,8 @@ def acc_visualization(output_dir: str, dpi=300):
     ax.legend()
     plt.tight_layout()
     
-    png_save_path = os.path.join(output_dir, "prt_result.png")
+    # png_save_path = os.path.join(output_dir, "prt_result.png")
+    png_save_path = "./prt_result.png"
     plt.savefig(png_save_path, dpi=dpi, bbox_inches="tight")
     print(f"Saving PRT result to {png_save_path}")
 

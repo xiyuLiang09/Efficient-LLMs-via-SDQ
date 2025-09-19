@@ -7,7 +7,7 @@ python train.py \
   --batch_size 24 \
   --gradient_accumulation_steps 3 \
   --max_steps 1000 \
-  --learning_rate 1e-3 \
+  --learning_rate 2e-4 \
   --lr_schedule cosine \
   --distill_weight 1 \
   --output_dir $1 \

@@ -121,11 +121,6 @@ def train(
             batch_start_time = time.time()
             batch = {k: batch[k].to(device) for k in batch.keys()}
 
-            if hasattr(batch, "offset_mapping"):
-                offset_mapping = batch.pop("offset_mapping")
-            if hasattr(batch, "context_positions"):
-                context_positions = batch.pop("context_positions")
-
             # Jointly training to support Switchable Precision
             if training_strategy == "sp":
                 teacher_start_logits_list = []
@@ -194,6 +189,8 @@ def train(
 
             # Cyclic Precision Training
             elif training_strategy == "cpt":
+                offset_mapping = batch.pop("offset_mapping")
+                context_positions = batch.pop("context_positions")
                 # when the input bit-width is a set of integers, use `cyclic_adjust_precision`
                 num_bits = cyclic_adjust_precision(
                     cyclic_num_bits_schedule=cyclic_num_bits_schedule,
@@ -318,6 +315,7 @@ def main():
     args = parse_args()
 
     bits_config_list = Config.bits_config_list
+    args.bits_config_list = bits_config_list
     if hasattr(Config, "eval_bits_config_list"):
         eval_bits_config_list = Config.eval_bits_config_list
     else:
@@ -327,6 +325,9 @@ def main():
         "lora_bits_configs",
         {"default": {"r": 8, "lora_alpha": 16, "lora_dropout": 0.1}},
     )
+    if args.training_strategy == "cpt":
+        lora_bits_configs = {"default": lora_bits_configs["default"]}
+
     
     # use highest precision to eval
     if args.training_strategy == "cpt":

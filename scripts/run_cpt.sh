@@ -10,6 +10,6 @@ python train.py \
   --lr_schedule cosine \
   --learning_rate 1e-4 \
   --num_cyclic_period 4 \
-  --cyclic_num_bits_schedule 3 8 \
+  --cyclic_num_bits_schedule 4 8 \
   --output_dir $1 \
   --do_eval

@@ -24,7 +24,9 @@ SIZE_RATIO_MAP = {
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run randomized evaluation with quantization configs")
-    parser.add_argument("--model_dir", type=str, required=True, help="Path to the tuned model")
+    parser.add_argument(
+        "--model_dir", type=str, default=None, help="Path to the tuned model"
+    )
     parser.add_argument("--alpha", type=float, default=0.7, help="Alpha parameter for greedy evaluation")
     parser.add_argument("--batch_size", type=int, default=24, help="Batch size for evaluation dataloader")
     parser.add_argument("--search_method", type=str, choices=["greedy", "random"], default="greedy", help="Search method")
@@ -32,6 +34,7 @@ def parse_args():
     parser.add_argument("--high_bits", type=int, default=8, help="Higher bits for greedy search")
     parser.add_argument("--lower_bound", type=float, help="Lower bound for greedy search")
     parser.add_argument("--use_random", action="store_true", help="Whether to use random greedy search")
+    parser.add_argument("--num_fixed_layers", type=int, default=6, help="Number of fixed layers for random search")
     parser.add_argument("--repeats", type=int, default=1, help="Number of random bits config")
     parser.add_argument(
         "--config_path",
@@ -47,6 +50,7 @@ def parse_args():
     )
 
     return parser.parse_args()
+
 
 
 def greedy_search(
@@ -132,39 +136,55 @@ def greedy_search(
 
     # 保存最终结果
     result = {
-        "fixed_layers": fixed_layers,
+        "eval_bits_config_list": [
+            {
+                "default": high_bits_config,
+                "layers": {
+                    f"layer_{i}": low_bits_config,
+                    **{f"layer_{j}": low_bits_config for j in fixed_layers},
+                },
+            }
+        ],
+        "fixed_layers": list(fixed_layers),
         "em_score": em_score_base,
     }
     print(json.dumps(result, indent=4))
-    result["bits_config"] = {
-        "default": high_bits_config,
-        "layers": {
-            f"layer_{i}": low_bits_config,
-            **{f"layer_{j}": low_bits_config for j in fixed_layers},
-        },
-    }
-
-    result["eval_bits_config_list"] = [{"default": high_bits_config, "layers": {}}]
 
     with open(output_path, "w") as f:
         json.dump(result, f, indent=4)
+    print(f"Save result to {output_path}")
 
-def random_search(bits_config_list, output_path: str, repeats: int = 1):
+
+def random_search(bits_config_list, output_path: str, num_fixed_layers: int, repeats: int = 1):
     """
-    Configure each model layer with a bit-width randomly selected from the input `bits_config_list`. A data example can be found in `./configs/random_search_bits.json`.
+    Randomly select `num_fixed_layers` layers from the 12 layers and set them to `low_bits_config`, while setting the remaining layers to `high_bits_config`. A data example can be found in `./configs/random_search_bits.json`.
     """
-    eval_bits_config_list = [{"default": bits_config_list[-1]["default"], "layers": {}} for _ in range(repeats)]
+    low_bits_config = bits_config_list[0]["default"]
+    high_bits_config = bits_config_list[-1]["default"]
+
+    layers_list = []
+    eval_bits_config_list = []
     
-    num_layers = 12
-    for eval_bits_config in eval_bits_config_list:
-        for layer_idx in range(num_layers):
-            # Pick a random bits_config
-            random_bits_config = random.choice(bits_config_list[:-1])
-            eval_bits_config["layers"][f"layer_{layer_idx}"] = random_bits_config["default"]
+    for _ in range(repeats):
+        layers = list(range(12))
+        random.shuffle(layers)
+        layers_list.append(layers[:num_fixed_layers])
+        eval_bits_config_list.append(
+            {
+                "default": high_bits_config,
+                "layers": {
+                    **{f"layer_{i}": low_bits_config for i in layers[:num_fixed_layers]},
+                },
+            } 
+        )
+
     with open(output_path, "w") as f:
         result = dict()
         result["eval_bits_config_list"] = eval_bits_config_list
         json.dump(result, f, indent=4)
+    print(f"Save result to {output_path}")
+
+
 
 
 if __name__ == "__main__":
@@ -183,7 +203,12 @@ if __name__ == "__main__":
         )
     elif args.search_method == "random":
         bits_config_list = json.load(open(args.config_path))["bits_config_list"]
-        random_search(bits_config_list=bits_config_list, output_path=args.output_path, repeats=args.repeats)
+        random_search(
+            bits_config_list=bits_config_list,
+            output_path=args.output_path,
+            num_fixed_layers=args.num_fixed_layers,
+            repeats=args.repeats,
+        )
     else:
         raise ValueError(f"Unknown mode: {args.search_method}")
 
