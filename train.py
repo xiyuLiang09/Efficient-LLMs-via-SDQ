@@ -123,6 +123,12 @@ def train(
 
             # Jointly training to support Switchable Precision
             if training_strategy == "sp":
+                # linearly increase the distill_weight to 1.0
+                if global_step <= 100:
+                    distill_weight = 0.01 * global_step
+                else:
+                    distill_weight = 1.0
+                    
                 teacher_start_logits_list = []
                 teacher_end_logits_list = []
 
